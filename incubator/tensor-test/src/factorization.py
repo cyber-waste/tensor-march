@@ -22,21 +22,49 @@ def print_tensor(tensor):
 def print_matrix(matrix):
     for i in range(len(matrix)) :
         print matrix[i]
-        print
+    print
 
 def factorize(tensor,j,iter=10):
     
-    def update(A,B,C):
+    def updateA():
         res = A
         
         for i in range(len(A)) :
             for j in range(len(A[0])) :
-                k1, k2 = 0.0, 0.0
+                k1, k2 = 0.1, 0.1
                 for t in range(len(B)) :
                     for q in range(len(C)) :
-                        k1 += B[t][j]*C[q][j]*tensor[t][i][q]/error[t][i][q]
+                        k1 += B[t][j]*C[q][j]*tensor[q][i][t]/error[q][i][t]
                         k2 += B[t][j]*C[q][j]
                 res[i][j] = A[i][j]*k1/k2
+        
+        return res
+    
+    def updateB():
+        res = B
+        
+        for t in range(len(B)) :
+            for j in range(len(A[0])) :
+                k1, k2 = 0.1, 0.1
+                for i in range(len(A)) :
+                    for q in range(len(C)) :
+                        k1 += A[i][j]*C[q][j]*tensor[q][i][t]/error[q][i][t]
+                        k2 += A[i][j]*C[q][j]
+                res[t][j] = B[t][j]*k1/k2
+        
+        return res
+    
+    def updateC():
+        res = C
+        
+        for q in range(len(C)) :
+            for j in range(len(A[0])) :
+                k1, k2 = 0.1, 0.1
+                for i in range(len(A)) :
+                    for t in range(len(B)) :
+                        k1 += A[i][j]*B[t][j]*tensor[q][i][t]/error[q][i][t]
+                        k2 += A[i][j]*B[t][j]
+                res[q][j] = C[q][j]*k1/k2
         
         return res
     
@@ -49,9 +77,9 @@ def factorize(tensor,j,iter=10):
     
     for _ in range(iter) :
         error = build_tensor(A, B, C)
-        A = update(A,B,C)
-        B = update(B, A, C)
-        C = update(C,A,B)
+        A = updateA()
+        B = updateB()
+        C = updateC()
     
     return (A,B,C)
 
@@ -70,8 +98,6 @@ C = [[11,12],[13,14]]
 
 tensor = build_tensor(A, B, C)
 print_tensor(tensor)
-# (A_new,B_new,C_new) = factorize(tensor, 2)
-# 
-# print_matrix(A_new)
-# print_matrix(B_new)
-# print_matrix(C_new)
+(A_new,B_new,C_new) = factorize(tensor, 2, 10000)
+
+print_tensor(build_tensor(A_new, B_new, C_new))
