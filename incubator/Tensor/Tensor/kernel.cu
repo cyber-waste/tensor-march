@@ -120,9 +120,10 @@ float* buildTensorExample(){
 
 int main ( int argc, char *  argv [] )
 {
-    int n=2, k=2;
-	//scanf("%d",&n);
-	//scanf("%d",&k);
+    //int n=2, k=2;
+	int n,k;
+	scanf("%d",&n);
+	scanf("%d",&k);
 	int size = n*n*n;
     int numBytesT = size * sizeof ( float );
 	int numBytesABC = (n*k) * sizeof(float);
@@ -133,20 +134,20 @@ int main ( int argc, char *  argv [] )
 	float * C = new float [n*k];
 	
 	for(int i=0;i<(n*k);i++){
-		A[i] = 2.0f;//(float)(rand()%100) + 1.0f;
-		B[i] = 2.0f;//(float)(rand()%100) + 1.0f;
-		C[i] = 2.0f;//(float)(rand()%100) + 1.0f;
+		A[i] = (float)(rand()%10000) + 1.0f;
+		B[i] = (float)(rand()%10000) + 1.0f;
+		C[i] = (float)(rand()%10000) + 1.0f;
 	}
 
-	//float * T = new float [size];
-	//float *Q = new float[size];
-	/*
+	float * T = new float [size];
+	float *Q = new float[size];
+	
     for ( int i = 0; i < size; i++ ){
-        T[i] = (float)(rand()%1000) +1.0f;
-		Q[i] = T[i];//(float)(rand()%100);
-		printf("%f ",T[i]);
+        T[i] = (float)(rand()%10000) +1.0f;
+		//Q[i] = T[i];//(float)(rand()%100);
+		//printf("%f ",T[i]);
 	}
-	*/
+	
 	/*
 	float* A_n = new float[n*k];
 	float* B_n = new float[n*k];
@@ -155,8 +156,8 @@ int main ( int argc, char *  argv [] )
 		A_n[i] = B_n[i] = C_n[i]= 0.0f;
 	}
 	*/
-	float  *Q = buildTensor(A,B,C,n,k);
-	float *T = buildTensorExample();
+	//float  *Q = buildTensor(A,B,C,n,k);
+	//float *T = buildTensorExample();
 
     float *T_c = NULL, *A_c = NULL, *B_c = NULL, *C_c = NULL, *Q_c = NULL, *A_n_c = NULL, *B_n_c = NULL, *C_n_c = NULL;
     cudaMalloc ( (void**)&T_c, numBytesT );
@@ -271,19 +272,19 @@ int main ( int argc, char *  argv [] )
     printf("\ntime spent executing by the GPU: %.2f millseconds\n", gpuTime );
     
 	printf("Matrix A\n");
-	for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", A[i] );
+	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", A[i] );
 	printf("\n");
 
 	printf("Matrix B\n");
-	for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", B[i] );
+	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", B[i] );
 	printf("\n");
 
 	printf("Matrix C\n");
-	for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", C[i] );
+	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", C[i] );
 	printf("\n");
 	
 	printf("Tensor Q\n");
-	for(int i=0;i<(n*n*n);i++) printf("%f ", Q[i]);
+	//for(int i=0;i<(n*n*n);i++) printf("%f ", Q[i]);
 	printf("\n");
 
     cudaEventDestroy ( start );
