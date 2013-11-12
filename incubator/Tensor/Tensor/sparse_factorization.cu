@@ -103,47 +103,54 @@ __global__ void factorCKernel ( float *T_q, float *T_d, int l_q, int l_d, float 
 	C_n[q*k+j] = C[q*k+j]*sum_n/sum_d;
 }
 
+void parseTensorFile(char* fileName, int** Ti_ind, float** Ti_data, int* leni_ind, int* leni_data, int** Tt_ind, float** Tt_data, int* lent_ind, int* lent_data, int** Tq_ind, float** Tq_data, int* lenq_ind, int* lenq_data){
+
+}
+
 int main ( int argc, char *  argv [] )
 {
-	int n,k;
-	 
-	// Tensor loading
-	scanf("%d",&n);
-	scanf("%d",&k);
-	int size = n*n*n;
-    int numBytesT = size * sizeof ( float );
-	int numBytesABC = (n*k) * sizeof(float);
+	char fileName[256];
+	int dim_i, dim_t, dim_q;
+	int k;
 
+	scanf("%s",fileName);
+	scanf("%s", &k);
 	
-	float * A = new float [n*k];
-	float * B = new float [n*k];
-	float * C = new float [n*k];
-	
-	for(int i=0;i<(n*k);i++){
-		A[i] = (float)(rand()%10000) + 1.0f;
-		B[i] = (float)(rand()%10000) + 1.0f;
-		C[i] = (float)(rand()%10000) + 1.0f;
-	}
+	float *Ti_data, *Tt_data, Tq_data;
+	int *Ti_ind, *Tt_ind, *Tq_ind;
+	int leni_ind, leni_data, lent_ind, lent_data, lenq_ind, lenq_data;
+	parseTensorFile(fileName, &Ti_ind, &Ti_data, &leni_ind, &leni_data, &Tt_ind, &Tt_data, &lent_ind, &lent_data, &Tq_ind, &Tq_data, &lenq_ind, &lenq_data);
+	dim_i = leni_ind;
+	dim_t = lent_ind;
+	dim_q = lenq_ind;
 
-	float * T = new float [size];
-	float *Q = new float[size];
-	
-    for ( int i = 0; i < size; i++ ){
-        T[i] = (float)(rand()%10000) +1.0f;
-		Q[i] = T[i];
-	}
+	float* A = new float[k*dim_i];
+	float* B = new float[k*dim_t];
+	float* C = new float[k*dim_q];
 
+	for(int i=0;i<(k*dim_i);i++) A[i] = (float)rand();
+	for(int i=0;i<(k*dim_t);i++) B[i] = (float)rand();
+	for(int i=0;i<(k*dim_q);i++) C[i] = (float)rand();
 
-    float *T_c = NULL;
-	cudaMalloc ( (void**)&T_c, numBytesT );
+    float *Ti_data_cuda = NULL, *Tt_data_cuda = NULL, Tq_data_cuda = NULL;
+	int *Ti_ind_cuda = NULL, *Tt_ind_cuda = NULL, *Tq_ind_cuda = NULL;
+	cudaMalloc ( (void**)&Ti_data_cuda, leni_data*sizeof(float) );
+	cudaMalloc ( (void**)&Tt_data_cuda, lent_data*sizeof(float) );
+	cudaMalloc ( (void**)&Tq_data_cuda, lenq_data*sizeof(float) );
+	cudaMalloc ( (void**)&Ti_ind_cuda, leni_ind*sizeof(int) );
+	cudaMalloc ( (void**)&Tt_ind_cuda, lent_ind*sizeof(int) );
+	cudaMalloc ( (void**)&Tq_ind_cuda, lenq_ind*sizeof(int) );
 	
 	float *A_cuda = NULL, *B_cuda = NULL, *C_cuda = NULL, *A_next_cuda = NULL, *B_next_cuda = NULL, *C_next_cuda = NULL;
-	cudaMalloc ( (void**)&A_cuda, numBytesABC );
-	cudaMalloc ( (void**)&B_cuda, numBytesABC );
-	cudaMalloc ( (void**)&C_cuda, numBytesABC );
-	cudaMalloc ( (void**)&A_next_cuda, numBytesABC );
-	cudaMalloc ( (void**)&B_next_cuda, numBytesABC );
-	cudaMalloc ( (void**)&C_next_cuda, numBytesABC );
+	int numBytesA = (k*dim_i)*sizeof(float);
+	int numBytesB = (k*dim_t)*sizeof(float);
+	int numBytesC = (k*dim_q)*sizeof(float);
+	cudaMalloc ( (void**)&A_cuda, numBytesA );
+	cudaMalloc ( (void**)&B_cuda, numBytesB );
+	cudaMalloc ( (void**)&C_cuda, numBytesC );
+	cudaMalloc ( (void**)&A_next_cuda, numBytesA );
+	cudaMalloc ( (void**)&B_next_cuda, numBytesB );
+	cudaMalloc ( (void**)&C_next_cuda, numBytesC );
 
     dim3 threads = dim3(k, n);
     dim3 blocks  = dim3(1, 1);
