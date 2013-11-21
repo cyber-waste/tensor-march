@@ -3,8 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
-__global__ void factorAKernel ( int *T_i, float *T_d ,float *A, float *B, float *C, float *A_n, int l_i, int l_t, int l_q, int l_d, int k)
+__global__ void factorAKernel ( int *T_i, float *T_d ,float *A, float *B, float *C, float *A_n, int l_i, int l_t, int l_q, int l_d, int k,float beta)
 {
 	int i = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
@@ -26,13 +27,13 @@ __global__ void factorAKernel ( int *T_i, float *T_d ,float *A, float *B, float 
 		}
 
 		temp = B[t*k+j]*C[q*k+j];
-		sum_n += temp * T_d[ind] / error;
-		sum_d += temp;
+		sum_n += temp * T_d[ind] / powf(error,1.0f - beta);
+		sum_d += temp * powf(error,beta);
 	}
 	A_n[i*k+j] = A[i*k+j]*(sum_n/sum_d);
 }
 
-__global__ void factorBKernel ( int *T_t, float *T_d, float *A, float *B, float *C, float *B_n, int l_i, int l_t, int l_q, int l_d, int k){
+__global__ void factorBKernel ( int *T_t, float *T_d, float *A, float *B, float *C, float *B_n, int l_i, int l_t, int l_q, int l_d, int k, float beta){
 	int t = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	
@@ -53,14 +54,14 @@ __global__ void factorBKernel ( int *T_t, float *T_d, float *A, float *B, float 
 		}
 
 		temp = A[i*k+j]*C[q*k+j];
-		sum_n += temp * T_d[ind] / error;
-		sum_d += temp;
+		sum_n += temp * T_d[ind] / powf(error, 1.0f - beta);
+		sum_d += temp * powf(error, beta);
 	}
 
 	B_n[t*k+j] = B[t*k+j]*(sum_n/sum_d);
 }
 
-__global__ void factorCKernel ( int *T_q, float *T_d, float *A, float *B, float *C, float *C_n, int l_i, int l_t, int l_q, int l_d, int k){
+__global__ void factorCKernel ( int *T_q, float *T_d, float *A, float *B, float *C, float *C_n, int l_i, int l_t, int l_q, int l_d, int k, float beta){
 	int q = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	
@@ -81,8 +82,8 @@ __global__ void factorCKernel ( int *T_q, float *T_d, float *A, float *B, float 
 		}
 
 		temp = A[i*k+j]*B[t*k+j];
-		sum_n += temp * T_d[ind] / error;
-		sum_d += temp;
+		sum_n += temp * T_d[ind] / powf(error, 1.0f - beta);
+		sum_d += temp * powf(error, beta);
 	}
 
 	C_n[q*k+j] = C[q*k+j]*sum_n/sum_d;
@@ -276,6 +277,8 @@ int main ( int argc, char *  argv [] )
 	int k = 2;
 	//scanf("%d", &k);
 	
+	float beta = 0.0f;
+
 	float* A = new float[k*i];
 	float* B = new float[k*t];
 	float* C = new float[k*q];
@@ -331,24 +334,24 @@ int main ( int argc, char *  argv [] )
 	for(int ind=0;ind<1000;ind++){
 		if(flag){	
 			cudaDeviceSynchronize();
-			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_cuda, B_cuda, C_cuda, A_next_cuda,i,t,q,3*n,k);
+			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_cuda, B_cuda, C_cuda, A_next_cuda,i,t,q,3*n,k,beta);
 
 			cudaDeviceSynchronize();
-			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_next_cuda, B_cuda, C_cuda, B_next_cuda, i,t,q,3*n,k);
+			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_next_cuda, B_cuda, C_cuda, B_next_cuda, i,t,q,3*n,k,beta);
 
 			cudaDeviceSynchronize();
-			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_next_cuda, B_next_cuda,C_cuda,C_next_cuda,i,t,q,3*n,k);
+			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_next_cuda, B_next_cuda,C_cuda,C_next_cuda,i,t,q,3*n,k,beta);
 
 		}
 		else{
 			cudaDeviceSynchronize();
-			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_next_cuda, B_next_cuda, C_next_cuda, A_cuda, i,t,q,3*n,k);
+			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_next_cuda, B_next_cuda, C_next_cuda, A_cuda, i,t,q,3*n,k,beta);
 			
 			cudaDeviceSynchronize();
-			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_cuda, B_next_cuda, C_next_cuda, B_cuda, i,t,q,3*n,k);
+			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_cuda, B_next_cuda, C_next_cuda, B_cuda, i,t,q,3*n,k,beta);
 			
 			cudaDeviceSynchronize();
-			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_cuda, B_cuda, C_next_cuda, C_cuda, i,t,q,3*n,k);
+			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_cuda, B_cuda, C_next_cuda, C_cuda, i,t,q,3*n,k,beta);
 		}
 		flag = !flag;
     
