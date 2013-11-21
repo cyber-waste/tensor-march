@@ -1,175 +1,309 @@
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
-__global__ void errorKernel(float* Q, float* A, float* B, float* C, int n, int k){
-	int i = blockIdx.y * blockDim.y + threadIdx.y;
-	int t = blockIdx.x * blockDim.x + threadIdx.x;
-	int q = blockIdx.z * blockDim.z + threadIdx.z;
-	float sum = 0.0f;
-	for(int j=0;j<k;j++){
-		sum += A[i*k+j]*B[t*k+j]*C[q*k+j];
-	}
-	Q[n*n*q+n*i+t] = sum;
-}
-
-__global__ void factorAKernel ( float *T, float *Q, float *A, float *B, float *C, float *A_n, int n, int k)
+__global__ void factorAKernel ( int *T_i, float *T_d ,float *A, float *B, float *C, float *A_n, int l_i, int l_t, int l_q, int l_d, int k)
 {
-	//printf("");
 	int i = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	float sum_n = 0.1f, sum_d = 0.1f;
-	float temp = 0.0f;
-		
-	for(int t=0; t<n; t++){
-		for(int q=0; q<n; q++){
-			temp = B[t*k+j]*C[q*k+j];
-			/*
-			if(i==0 && j==0){
-				printf("(t,q)=(%d %d) num=%f den=%f\n",t,q,temp*(T[n*n*q+n*i+t]/ Q[n*n*q+n*i+t]),temp);
-			}
-			*/
-			// ugly fix
-			//if(Q[n*n*q+n*i+t] < 0.00000001)
-			//	sum_n += temp;
-			//else
-			sum_n += temp*(T[n*n*q+n*i+t]/ Q[n*n*q+n*i+t]);
-			sum_d += temp;
+	float temp = 0.0f, error = 0.0f;
+	
+	int start = T_i[i];
+	int end = ((i+1) < l_i) ? T_i[i+1] : l_d;
+	int q = 0, t=0;
+	
+	for(int ind=start+2; ind<end; ind+=3){
+		t = T_d[ind-2];
+		q = T_d[ind-1];
+
+		error = 0.0f;
+		for(int j_i=0;j_i<k;j_i++){
+			error += A[i*k+j_i]*B[t*k+j_i]*C[q*k+j_i];
 		}
+
+		temp = B[t*k+j]*C[q*k+j];
+		sum_n += temp * T_d[ind] / error;
+		sum_d += temp;
 	}
-		
 	A_n[i*k+j] = A[i*k+j]*(sum_n/sum_d);
 }
 
-__global__ void factorBKernel ( float *T, float *Q, float *A, float *B, float *C, float *B_n, int n, int k){
+__global__ void factorBKernel ( int *T_t, float *T_d, float *A, float *B, float *C, float *B_n, int l_i, int l_t, int l_q, int l_d, int k){
 	int t = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	float sum_n = 0.1f, sum_d = 0.1f;
-	float temp = 0.0f;
+	float temp = 0.0f, error = 0.0f;
 	
-	for(int i=0;i<n;i++){
-		for(int q=0;q<n;q++){
-			temp = A[i*k+j]*C[q*k+j];
-			/*
-			if(t==0 && j==0){
-				printf("(i,q)=(%d %d) num=%f den=%f\n",i,q,temp*(T[n*n*q+n*i+t]/ Q[n*n*q+n*i+t]),temp);
-			}
-			*/
-			//if(Q[n*n*q+n*i+t] < 0.00000001)
-			//	sum_n += temp;
-			//else
-			sum_n += temp*(T[n*n*q+n*i+t]/ Q[n*n*q+n*i+t]);
-			sum_d += temp;
+	int start = T_t[t];
+	int end = ((t+1) < l_t) ? T_t[t+1] : l_d;
+	int i,q;
+
+	for(int ind=start+2; ind<end; ind+=3){
+		q = (int)T_d[ind-2];
+		i = (int)T_d[ind-1];
+
+		error = 0.0f;
+		for(int j=0;j<k;j++){
+			error += A[i*k+j]*B[t*k+j]*C[q*k+j];
 		}
+
+		temp = A[i*k+j]*C[q*k+j];
+		sum_n += temp * T_d[ind] / error;
+		sum_d += temp;
 	}
-	//if(t==0 && j==0) printf("res = %f * %f / %f\n",B[t*k+j],sum_n,sum_d);
+
 	B_n[t*k+j] = B[t*k+j]*(sum_n/sum_d);
 }
 
-__global__ void factorCKernel ( float *T, float *Q, float *A, float *B, float *C, float *C_n, int n, int k){
+__global__ void factorCKernel ( int *T_q, float *T_d, float *A, float *B, float *C, float *C_n, int l_i, int l_t, int l_q, int l_d, int k){
 	int q = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	float sum_n = 0.1f, sum_d = 0.1f;
-	float temp = 0.0f;
+	float temp = 0.0f, error = 0.0f;
+	
+	int start = T_q[q];
+	int end = ((q+1) < l_q) ? T_q[q+1] : l_d;
+	int i,t;
 
-	for(int t=0;t<n;t++){
-		for(int i=0;i<n;i++){
-			temp = A[i*k+j]*B[t*k+j];
-			//if(Q[n*n*q+n*i+t] < 0.00000001)
-			//	sum_n += temp;
-			//else
-			sum_n += temp*T[n*n*q+n*i+t]/ Q[n*n*q+n*i+t];
-			sum_d += temp;
+	for(int ind=start+2; ind<end; ind+=3){
+		i = (int)T_d[ind-2];
+		t = (int)T_d[ind-1];
+
+		error = 0.0f;
+		for(int j=0;j<k;j++){
+			error += A[i*k+j]*B[t*k+j]*C[q*k+j];
 		}
+
+		temp = A[i*k+j]*B[t*k+j];
+		sum_n += temp * T_d[ind] / error;
+		sum_d += temp;
 	}
 
 	C_n[q*k+j] = C[q*k+j]*sum_n/sum_d;
 }
 
-float* buildTensor(float* A, float* B, float* C, int n, int k){
-	int size = n*n*n;
-	float* T = new float[size];
+typedef struct tensor_elem{
+    int i,t,q;
+    float val;
+} tensor_elem;
 
-	for(int i=0;i<n;i++){
-		for(int t=0;t<n;t++){
-			for(int q=0;q<n;q++){
-				T[n*n*q+n*i+t] = 0;
-				for(int j=0;j<k;j++){
-					T[n*n*q+n*i+t] += A[i*k+j]*B[t*k+j]*C[q*k+j];
-				}
-			}
-		}
-	}
-
-	return T;
+int comp_i(const void* el1, const void* el2){
+    tensor_elem first  = *((tensor_elem*)el1);
+    tensor_elem second = *((tensor_elem*)el2);
+    return first.i > second.i || (first.i == second.i && first.t > second.t) || (first.i == second.i && first.t == second.t && first.q > second.q);
 }
 
-float* buildTensorExample(){
-	float A[] = {1.0f,2.0f,3.0f,4.0f};
-	float B[] = {5.0f,6.0f,7.0f,8.0f};
-	float C[] = {9.0f,10.0f,11.0f,12.0f};
-	int n=2, k=2;
-	return buildTensor(A,B,C,n,k);
+int comp_t(const void* el1, const void* el2){
+    tensor_elem first  = *((tensor_elem*)el1);
+    tensor_elem second = *((tensor_elem*)el2);
+    return first.t > second.t || (first.t == second.t && first.q < second.q) || (first.t == second.t && first.q == second.q && first.i > second.i);
+}
+
+int comp_q(const void* el1, const void* el2){
+    tensor_elem first  = *((tensor_elem*)el1);
+    tensor_elem second = *((tensor_elem*)el2);
+    return first.q > second.q || (first.q == second.q && first.i > second.i) || (first.q == second.q && first.i == second.i && first.t > second.t);
+}
+
+void parseTensorFile(char* fileName, int** Ti_ind, float** Ti_data, int** Tt_ind, float** Tt_data, int** Tq_ind, float** Tq_data, int* leni_ind, int* lent_ind, int* lenq_ind, int* num_values){
+    
+    FILE* f = fopen(fileName, "r");
+    
+    int n = 0;
+    int i,t,q;
+    float val;
+    fscanf(f,"%d %d %d",&i,&t,&q);
+    *leni_ind = i;
+    *lent_ind = t;
+    *lenq_ind = q;
+    fscanf(f,"%d",&n);
+    *num_values = n;
+    tensor_elem* T = (tensor_elem*)malloc(n*sizeof(tensor_elem));
+    
+    for(int ind=0;ind<n;ind++){
+        fscanf(f,"%d %d %d %f",&i,&t,&q,&val);
+        tensor_elem cur;
+        cur.i = i; cur.t = t; cur.q = q; cur.val = val;
+        T[ind] = cur;
+    }
+    fclose(f);
+    
+    qsort(T, n, sizeof(tensor_elem),comp_i);
+    
+    *Ti_ind = (int*)malloc((*leni_ind)*sizeof(int));
+    int* Ti_ind_cur = *Ti_ind;
+    *Ti_data = (float*)malloc(3*n*sizeof(float));
+    float* Ti_data_cur = *Ti_data; 
+    
+    int ind_data = 0;
+    int ind_sparse = 0;
+    Ti_ind_cur[0]=0;
+    for(int ind=0;ind<((*leni_ind) - 1);ind++){
+        while((ind_sparse < (3*n)) && (T[ind_data].i == ind)){
+            Ti_data_cur[ind_sparse] = T[ind_data].t;
+            Ti_data_cur[ind_sparse+1] = T[ind_data].q;
+            Ti_data_cur[ind_sparse+2] = T[ind_data].val; 
+            ind_data++;
+            ind_sparse+=3;
+        }
+        Ti_ind_cur[ind+1]=ind_sparse;
+                    
+    }
+    while(ind_sparse < (3*n)){
+        Ti_data_cur[ind_sparse] = T[ind_data].t;
+        Ti_data_cur[ind_sparse+1] = T[ind_data].q;
+        Ti_data_cur[ind_sparse+2] = T[ind_data].val; 
+        ind_data++;
+        ind_sparse+=3;
+    }
+    
+    qsort(T, n, sizeof(tensor_elem),comp_t);
+    
+	*Tt_ind = (int*)malloc((*lent_ind)*sizeof(int));
+    int* Tt_ind_cur = *Tt_ind;
+    *Tt_data = (float*)malloc(3*n*sizeof(float));
+    float* Tt_data_cur = *Tt_data; 
+    
+    ind_data = 0;
+    ind_sparse = 0;
+    Tt_ind_cur[0]=0;
+    for(int ind=0;ind<((*lent_ind) - 1);ind++){
+        while((ind_sparse < (3*n)) && (T[ind_data].t == ind)){
+            Tt_data_cur[ind_sparse] = T[ind_data].i;
+            Tt_data_cur[ind_sparse+1] = T[ind_data].q;
+            Tt_data_cur[ind_sparse+2] = T[ind_data].val; 
+            ind_data++;
+            ind_sparse+=3;
+        }
+        Tt_ind_cur[ind+1]=ind_sparse;
+                    
+    }
+    while(ind_sparse < (3*n)){
+        Tt_data_cur[ind_sparse] = T[ind_data].i;
+        Tt_data_cur[ind_sparse+1] = T[ind_data].q;
+        Tt_data_cur[ind_sparse+2] = T[ind_data].val; 
+        ind_data++;
+        ind_sparse+=3;
+    }
+
+    qsort(T, n, sizeof(tensor_elem),comp_q);
+    
+	*Tq_ind = (int*)malloc((*lenq_ind)*sizeof(int));
+    int* Tq_ind_cur = *Tq_ind;
+    *Tq_data = (float*)malloc(3*n*sizeof(float));
+    float* Tq_data_cur = *Tq_data; 
+    
+    ind_data = 0;
+    ind_sparse = 0;
+    Tq_ind_cur[0]=0;
+    for(int ind=0;ind<((*lenq_ind) - 1);ind++){
+        while((ind_sparse < (3*n)) && (T[ind_data].q == ind)){
+            Tq_data_cur[ind_sparse] = T[ind_data].i;
+            Tq_data_cur[ind_sparse+1] = T[ind_data].t;
+            Tq_data_cur[ind_sparse+2] = T[ind_data].val; 
+            ind_data++;
+            ind_sparse+=3;
+        }
+        Tq_ind_cur[ind+1]=ind_sparse;
+                    
+    }
+    while(ind_sparse < (3*n)){
+        Tq_data_cur[ind_sparse] = T[ind_data].i;
+        Tq_data_cur[ind_sparse+1] = T[ind_data].t;
+        Tq_data_cur[ind_sparse+2] = T[ind_data].val; 
+        ind_data++;
+        ind_sparse+=3;
+    }
+
+    free(T);
+}
+
+void printToFile(char* fileNameA, char* fileNameB, char* fileNameC, int k, float* A, int i, float* B, int t, float* C, int q){
+    //open file
+    FILE* fA = fopen(fileNameA, "w");
+    FILE* fB = fopen(fileNameB, "w");
+    FILE* fC = fopen(fileNameC, "w");
+    for(int ind=1;ind<=(k*i);ind++){
+        fprintf(fA,"%f",A[ind-1]);
+        if(ind % k == 0) fprintf(fA,"\n");
+        else fprintf(fA," ");
+    }
+    for(int ind=1;ind<=(k*t);ind++){
+        fprintf(fB,"%f",B[ind-1]);
+        if(ind % k == 0) fprintf(fB,"\n");
+        else fprintf(fB," ");
+    }
+    for(int ind=1;ind<=(k*q);ind++){
+        fprintf(fC,"%f",C[ind-1]);
+        if(ind % k == 0) fprintf(fC,"\n");
+        else fprintf(fC," ");
+    }
+    fclose(fA);
+    fclose(fB);
+    fclose(fC);
 }
 
 int main ( int argc, char *  argv [] )
 {
-    //int n=2, k=2;
-	int n,k;
-	scanf("%d",&n);
-	scanf("%d",&k);
-	int size = n*n*n;
-    int numBytesT = size * sizeof ( float );
-	int numBytesABC = (n*k) * sizeof(float);
+	char fileName[] = "tensor.txt";
+	char fileA[] = "A.txt";
+	char fileB[] = "B.txt";
+	char fileC[] = "C.txt";
 
-	
-	float * A = new float [n*k];
-	float * B = new float [n*k];
-	float * C = new float [n*k];
-	
-	for(int i=0;i<(n*k);i++){
-		A[i] = (float)(rand()%10000) + 1.0f;
-		B[i] = (float)(rand()%10000) + 1.0f;
-		C[i] = (float)(rand()%10000) + 1.0f;
-	}
-
-	float * T = new float [size];
-	float *Q = new float[size];
-	
-    for ( int i = 0; i < size; i++ ){
-        T[i] = (float)(rand()%10000) +1.0f;
-		//Q[i] = T[i];//(float)(rand()%100);
-		//printf("%f ",T[i]);
-	}
-	
+    int *Ti_ind, *Tt_ind, *Tq_ind;
+    float* Ti_data, *Tt_data, *Tq_data;
+    int i, t, q, n;
+    parseTensorFile(fileName,&Ti_ind,&Ti_data,&Tt_ind,&Tt_data,&Tq_ind,&Tq_data,&i,&t,&q,&n);
+    /*
+	for(int ind=0;ind<i;ind++){
+        printf("%d ", Ti_ind[ind]);
+    }
+    printf("\n\n");
+    */
 	/*
-	float* A_n = new float[n*k];
-	float* B_n = new float[n*k];
-	float* C_n = new float[n*k];
-	for(int i=0;i<(n*k);i++){
-		A_n[i] = B_n[i] = C_n[i]= 0.0f;
-	}
+	for(int ind=0;ind<(3*n);ind+=3){
+        printf("%f %f %f\n",Ti_data[ind],Ti_data[ind+1],Ti_data[ind+2]);
+    }
 	*/
-	//float  *Q = buildTensor(A,B,C,n,k);
-	//float *T = buildTensorExample();
+    printf("\n");   
+	
+	int k = 2;
+	//scanf("%d", &k);
+	
+	float* A = new float[k*i];
+	float* B = new float[k*t];
+	float* C = new float[k*q];
 
-    float *T_c = NULL, *A_c = NULL, *B_c = NULL, *C_c = NULL, *Q_c = NULL, *A_n_c = NULL, *B_n_c = NULL, *C_n_c = NULL;
-    cudaMalloc ( (void**)&T_c, numBytesT );
-	cudaMalloc( (void**)&Q_c, numBytesT);
-	cudaMalloc ( (void**)&A_c, numBytesABC );
-	cudaMalloc ( (void**)&B_c, numBytesABC );
-	cudaMalloc ( (void**)&C_c, numBytesABC );
-	cudaMalloc ( (void**)&A_n_c, numBytesABC );
-	cudaMalloc ( (void**)&B_n_c, numBytesABC );
-	cudaMalloc ( (void**)&C_n_c, numBytesABC );
+	for(int ind=0;ind<(k*i);ind++) A[ind] = 1.0f;//(float)rand();
+	for(int ind=0;ind<(k*t);ind++) B[ind] = 1.0f;//(float)rand();
+	for(int ind=0;ind<(k*q);ind++) C[ind] = 1.0f;//(float)rand();
 
-    dim3 threads = dim3(k, n);
+    float *Ti_data_cuda = NULL, *Tt_data_cuda = NULL, *Tq_data_cuda = NULL;
+	int *Ti_ind_cuda = NULL, *Tt_ind_cuda = NULL, *Tq_ind_cuda = NULL;
+	cudaMalloc ( (void**)&Ti_data_cuda, 3*n*sizeof(float) );
+	cudaMalloc ( (void**)&Tt_data_cuda, 3*n*sizeof(float) );
+	cudaMalloc ( (void**)&Tq_data_cuda, 3*n*sizeof(float) );
+	cudaMalloc ( (void**)&Ti_ind_cuda, i*sizeof(int) );
+	cudaMalloc ( (void**)&Tt_ind_cuda, t*sizeof(int) );
+	cudaMalloc ( (void**)&Tq_ind_cuda, q*sizeof(int) );
+	
+	float *A_cuda = NULL, *B_cuda = NULL, *C_cuda = NULL, *A_next_cuda = NULL, *B_next_cuda = NULL, *C_next_cuda = NULL;
+	int numBytesA = (k*i)*sizeof(float);
+	int numBytesB = (k*t)*sizeof(float);
+	int numBytesC = (k*q)*sizeof(float);
+	cudaMalloc ( (void**)&A_cuda, numBytesA );
+	cudaMalloc ( (void**)&B_cuda, numBytesB );
+	cudaMalloc ( (void**)&C_cuda, numBytesC );
+	cudaMalloc ( (void**)&A_next_cuda, numBytesA );
+	cudaMalloc ( (void**)&B_next_cuda, numBytesB );
+	cudaMalloc ( (void**)&C_next_cuda, numBytesC );
+
     dim3 blocks  = dim3(1, 1);
 
     cudaEvent_t start, stop;
@@ -180,71 +314,41 @@ int main ( int argc, char *  argv [] )
     cudaEventRecord ( start, 0 );
     
 	cudaDeviceSynchronize();
-	cudaMemcpy      ( T_c, T, numBytesT, cudaMemcpyHostToDevice );
-	cudaMemcpy      ( Q_c, Q, numBytesT, cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Ti_data_cuda, Ti_data, 3*n*sizeof(float), cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Ti_ind_cuda, Ti_ind, i*sizeof(int), cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Tt_data_cuda, Tt_data, 3*n*sizeof(float), cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Tt_ind_cuda, Tt_ind, t*sizeof(int), cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Tq_data_cuda, Tq_data, 3*n*sizeof(float), cudaMemcpyHostToDevice );
+	cudaMemcpy      ( Tq_ind_cuda, Tq_ind, q*sizeof(int), cudaMemcpyHostToDevice );
 	
-	cudaMemcpy      ( A_c, A, numBytesABC, cudaMemcpyHostToDevice );
-	cudaMemcpy      ( B_c, B, numBytesABC, cudaMemcpyHostToDevice );
-	cudaMemcpy      ( C_c, C, numBytesABC, cudaMemcpyHostToDevice );
+	cudaMemcpy      ( A_cuda, A, numBytesA, cudaMemcpyHostToDevice );
+	cudaMemcpy      ( B_cuda, B, numBytesB, cudaMemcpyHostToDevice );
+	cudaMemcpy      ( C_cuda, C, numBytesC, cudaMemcpyHostToDevice );
 
-	/*	
-	cudaDeviceSynchronize();
-	cudaMemcpy      ( A_n_c, A_n, numBytesABC, cudaMemcpyHostToDevice );
-	cudaMemcpy      ( B_n_c, B_n, numBytesABC, cudaMemcpyHostToDevice );
-	cudaMemcpy      ( C_n_c, C_n, numBytesABC, cudaMemcpyHostToDevice );
-	*/
-	/*
-	cudaDeviceSynchronize();
-	factorAKernel<<<blocks, threads>>>(T_c,Q_c,A_c,B_c,C_c,A_n_c,n,k);
-	cudaDeviceSynchronize();
-	factorBKernel<<<blocks, threads>>>(T_c,Q_c,A_n_c,B_c,C_c,B_n_c,n,k);
-	cudaDeviceSynchronize();
-	factorCKernel<<<blocks, threads>>>(T_c,Q_c,A_n_c,B_n_c,C_c,C_n_c,n,k);
-	cudaDeviceSynchronize();
-	
-	cudaMemcpy      ( A, A_n_c, numBytesABC, cudaMemcpyDeviceToHost );
-	cudaMemcpy      ( B, B_n_c, numBytesABC, cudaMemcpyDeviceToHost );
-	cudaMemcpy      ( C, C_n_c, numBytesABC, cudaMemcpyDeviceToHost );
-	cudaDeviceSynchronize();
-	*/
 	
 	bool flag = true;
 
-	for(int i=0;i<1000;i++){
+	for(int ind=0;ind<1000;ind++){
 		if(flag){	
 			cudaDeviceSynchronize();
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_c,B_c,C_c,n,k);
-			cudaDeviceSynchronize();
-			factorAKernel<<<blocks, threads>>>(T_c,Q_c,A_c,B_c,C_c,A_n_c,n,k);
-			cudaDeviceSynchronize();
+			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_cuda, B_cuda, C_cuda, A_next_cuda,i,t,q,3*n,k);
 
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_n_c,B_c,C_c,n,k);
 			cudaDeviceSynchronize();
-			factorBKernel<<<blocks, threads>>>(T_c,Q_c,A_n_c,B_c,C_c,B_n_c,n,k);
+			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_next_cuda, B_cuda, C_cuda, B_next_cuda, i,t,q,3*n,k);
+
 			cudaDeviceSynchronize();
-			
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_n_c,B_n_c,C_c,n,k);
-			cudaDeviceSynchronize();
-			factorCKernel<<<blocks, threads>>>(T_c,Q_c,A_n_c,B_n_c,C_c,C_n_c,n,k);
-			cudaDeviceSynchronize();
+			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_next_cuda, B_next_cuda,C_cuda,C_next_cuda,i,t,q,3*n,k);
 
 		}
 		else{
 			cudaDeviceSynchronize();
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_n_c,B_n_c,C_n_c,n,k);
-			cudaDeviceSynchronize();
-			factorAKernel<<<blocks, threads>>>(T_c,Q_c,A_n_c,B_n_c,C_n_c,A_c,n,k);
-			cudaDeviceSynchronize();
+			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_next_cuda, B_next_cuda, C_next_cuda, A_cuda, i,t,q,3*n,k);
 			
 			cudaDeviceSynchronize();
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_c,B_n_c,C_n_c,n,k);
-			factorBKernel<<<blocks, threads>>>(T_c,Q_c,A_c,B_n_c,C_n_c,B_c,n,k);
-			cudaDeviceSynchronize();
+			factorBKernel<<<blocks, dim3(k,t)>>>(Tt_ind_cuda, Tt_data_cuda, A_cuda, B_next_cuda, C_next_cuda, B_cuda, i,t,q,3*n,k);
 			
 			cudaDeviceSynchronize();
-			errorKernel<<<dim3(1,1,1),dim3(n,n,n)>>>(Q_c,A_c,B_c,C_n_c,n,k);
-			factorCKernel<<<blocks, threads>>>(T_c,Q_c,A_c,B_c,C_n_c,C_c,n,k);
-			cudaDeviceSynchronize();
+			factorCKernel<<<blocks, dim3(k,q)>>>(Tq_ind_cuda, Tq_data_cuda, A_cuda, B_cuda, C_next_cuda, C_cuda, i,t,q,3*n,k);
 		}
 		flag = !flag;
     
@@ -252,18 +356,16 @@ int main ( int argc, char *  argv [] )
 	
 	cudaDeviceSynchronize();
 	if(flag == false){
-		cudaMemcpy      ( A, A_n_c, numBytesABC, cudaMemcpyDeviceToHost );
-		cudaMemcpy      ( B, B_n_c, numBytesABC, cudaMemcpyDeviceToHost );
-		cudaMemcpy      ( C, C_n_c, numBytesABC, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( A, A_next_cuda, numBytesA, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( B, B_next_cuda, numBytesB, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( C, C_next_cuda, numBytesC, cudaMemcpyDeviceToHost );
 	}
 	else{
-		cudaMemcpy      ( A, A_c, numBytesABC, cudaMemcpyDeviceToHost );
-		cudaMemcpy      ( B, B_c, numBytesABC, cudaMemcpyDeviceToHost );
-		cudaMemcpy      ( C, C_c, numBytesABC, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( A, A_cuda, numBytesA, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( B, B_cuda, numBytesB, cudaMemcpyDeviceToHost );
+		cudaMemcpy      ( C, C_cuda, numBytesC, cudaMemcpyDeviceToHost );
 	}
-	cudaMemcpy      ( Q, Q_c, numBytesT, cudaMemcpyDeviceToHost );
-	
-	cudaDeviceSynchronize();
+
 	
 	cudaEventRecord ( stop, 0 );
     cudaEventSynchronize ( stop );
@@ -271,37 +373,31 @@ int main ( int argc, char *  argv [] )
 
     printf("\ntime spent executing by the GPU: %.2f millseconds\n", gpuTime );
     
-	printf("Matrix A\n");
-	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", A[i] );
-	printf("\n");
-
-	printf("Matrix B\n");
-	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", B[i] );
-	printf("\n");
-
-	printf("Matrix C\n");
-	//for ( int i = 0; i < (n*k); i++ ) printf ( "%f ", C[i] );
-	printf("\n");
-	
-	printf("Tensor Q\n");
-	//for(int i=0;i<(n*n*n);i++) printf("%f ", Q[i]);
-	printf("\n");
+	printToFile(fileA,fileB,fileC,k,A,i,B,t,C,q);
 
     cudaEventDestroy ( start );
     cudaEventDestroy ( stop  );
-    cudaFree(T_c);
-	cudaFree(Q_c);
-	cudaFree(A_c);
-	cudaFree(B_c);
-	cudaFree(C_c);
-	cudaFree(A_n_c);
-	cudaFree(B_n_c);
-	cudaFree(C_n_c);
-    delete[] T;
+    cudaFree(Ti_ind_cuda);
+	cudaFree(Ti_data_cuda);
+	cudaFree(Tt_ind_cuda);
+	cudaFree(Tt_data_cuda);
+	cudaFree(Tq_ind_cuda);
+	cudaFree(Tq_data_cuda);
+	cudaFree(A_cuda);
+	cudaFree(B_cuda);
+	cudaFree(C_cuda);
+	cudaFree(A_next_cuda);
+	cudaFree(B_next_cuda);
+	cudaFree(C_next_cuda);
+    delete[] Ti_ind;
+	delete[] Ti_data;
+	delete[] Tt_ind;
+	delete[] Tt_data;
+	delete[] Tq_ind;
+	delete[] Tq_data;
 	delete[] A;
 	delete[] B;
 	delete[] C;
-	delete[] Q;
-
+	
     return 0;
 }
