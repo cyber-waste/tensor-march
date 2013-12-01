@@ -5,6 +5,11 @@
 #include <stdlib.h>
 #include <math.h>
 
+#include <set>
+#include <utility>
+
+using namespace std;
+
 __global__ void factorAKernel ( int *T_i, float *T_d ,float *A, float *B, float *C, float *A_n, int l_i, int l_t, int l_q, int l_d, int k,float beta)
 {
 	int i = blockIdx.y * blockDim.y + threadIdx.y;
@@ -112,30 +117,10 @@ int comp_q(const void* el1, const void* el2){
     return first.q > second.q || (first.q == second.q && first.i > second.i) || (first.q == second.q && first.i == second.i && first.t > second.t);
 }
 
-void parseTensorFile(char* fileName, int** Ti_ind, float** Ti_data, int** Tt_ind, float** Tt_data, int** Tq_ind, float** Tq_data, int* leni_ind, int* lent_ind, int* lenq_ind, int* num_values){
-    
-    FILE* f = fopen(fileName, "r");
-    
-    int n = 0;
-    int i,t,q;
-    float val;
-    fscanf(f,"%d %d %d",&i,&t,&q);
-    *leni_ind = i;
-    *lent_ind = t;
-    *lenq_ind = q;
-    fscanf(f,"%d",&n);
-    *num_values = n;
-    tensor_elem* T = (tensor_elem*)malloc(n*sizeof(tensor_elem));
-    
-    for(int ind=0;ind<n;ind++){
-        fscanf(f,"%d %d %d %f",&i,&t,&q,&val);
-        tensor_elem cur;
-        cur.i = i; cur.t = t; cur.q = q; cur.val = val;
-        T[ind] = cur;
-    }
-    fclose(f);
-    
-    qsort(T, n, sizeof(tensor_elem),comp_i);
+void unfoldTensor(tensor_elem* T, int** Ti_ind, float** Ti_data, int** Tt_ind, float** Tt_data, int** Tq_ind, float** Tq_data, int* leni_ind, int* lent_ind, int* lenq_ind, int* num_values){
+	
+	int n = *num_values;
+	qsort(T, n, sizeof(tensor_elem),comp_i);
     
     *Ti_ind = (int*)malloc((*leni_ind)*sizeof(int));
     int* Ti_ind_cur = *Ti_ind;
@@ -221,8 +206,108 @@ void parseTensorFile(char* fileName, int** Ti_ind, float** Ti_data, int** Tt_ind
         ind_data++;
         ind_sparse+=3;
     }
+}
+
+void parseTensorFile(char* fileName, int** Ti_ind, float** Ti_data, int** Tt_ind, float** Tt_data, int** Tq_ind, float** Tq_data, int* leni_ind, int* lent_ind, int* lenq_ind, int* num_values){
+    
+    FILE* f = fopen(fileName, "r");
+    
+    int n = 0;
+    int i,t,q;
+    float val;
+    fscanf(f,"%d %d %d",&i,&t,&q);
+    *leni_ind = i;
+    *lent_ind = t;
+    *lenq_ind = q;
+    fscanf(f,"%d",&n);
+    *num_values = n;
+    tensor_elem* T = (tensor_elem*)malloc(n*sizeof(tensor_elem));
+    
+    for(int ind=0;ind<n;ind++){
+        fscanf(f,"%d %d %d %f",&i,&t,&q,&val);
+        tensor_elem cur;
+        cur.i = i; cur.t = t; cur.q = q; cur.val = val;
+        T[ind] = cur;
+    }
+    fclose(f);
+    
+	unfoldTensor(T,Ti_ind,Ti_data,Tt_ind,Tt_data,Tq_ind,Tq_data,leni_ind,lent_ind,lenq_ind,num_values);
 
     free(T);
+}
+
+void printTensorToFile(char* fileName, tensor_elem* T, int i, int t, int q, int n){
+	FILE* f = fopen(fileName, "w");
+	fprintf(f,"%d %d %d\n",i,t,q);
+	fprintf(f,"%d\n",n);
+	
+	qsort(T, n, sizeof(tensor_elem),comp_i);
+
+	for(int ind=0;ind<n;ind++){
+		tensor_elem cur = T[ind];
+		fprintf(f,"%d %d %d %f\n",cur.i,cur.t, cur.q, cur.val);
+	}
+	fclose(f);
+}
+
+void genTensor(int** Ti_ind, float** Ti_data, int** Tt_ind, float** Tt_data, int** Tq_ind, float** Tq_data, int leni_ind, int lent_ind, int lenq_ind, int num_values){
+
+	int n = num_values;
+
+	tensor_elem* T = (tensor_elem*)malloc(n*sizeof(tensor_elem));
+	//tensor_elem* T = new tensor_elem[num_values];
+
+	set<pair<int,pair<int,int> > > index_set;
+
+	int ind=0;
+    while(ind<n){
+        tensor_elem cur;
+		int i = rand() % leni_ind;
+		int t = rand() % lent_ind;
+		int q = rand() % lenq_ind;
+
+		if( index_set.find(make_pair(i,make_pair(t,q))) == index_set.end() ){
+			cur.i = i; 
+			cur.t = t; 
+			cur.q = q; 
+			cur.val = rand() % 100;
+			T[ind] = cur;
+			index_set.insert(make_pair(i,make_pair(t,q)));
+			ind++;
+		}
+    }
+    qsort(T, n, sizeof(tensor_elem),comp_i);
+	printTensorToFile("tensor_input.txt",T,leni_ind,lent_ind,lenq_ind,num_values);
+
+	unfoldTensor(T,Ti_ind,Ti_data,Tt_ind,Tt_data,Tq_ind,Tq_data,&leni_ind,&lent_ind,&lenq_ind,&num_values);
+
+    free(T);
+}
+
+tensor_elem* buildErrorTensor(float* A, float* B,float* C,int k,int leni_ind, int lent_ind, int lenq_ind){
+	
+	//tensor_elem* T = new tensor_elem[leni_ind*lent_ind*lenq_ind];
+	tensor_elem* T = (tensor_elem*)malloc(leni_ind*lent_ind*lenq_ind*sizeof(tensor_elem));
+
+
+	int ind = 0;
+	for(int i=0;i<leni_ind;i++){
+		for(int t=0;t<lent_ind;t++){
+			for(int q=0;q<lenq_ind;q++){
+				float cur = 0.0f;
+				for(int j=0;j<k;j++){
+					cur += A[i*k+j]*B[t*k+j]*C[q*k+j];
+				}
+				T[ind].i = i;
+				T[ind].t = t;
+				T[ind].q = q;
+				T[ind].val = cur;
+				ind++;
+			}
+		}
+	}
+
+	return T;
 }
 
 void printToFile(char* fileNameA, char* fileNameB, char* fileNameC, int k, float* A, int i, float* B, int t, float* C, int q){
@@ -250,18 +335,23 @@ void printToFile(char* fileNameA, char* fileNameB, char* fileNameC, int k, float
     fclose(fC);
 }
 
+
+
 int main ( int argc, char *  argv [] )
 {
-	char fileName[] = "tensor.txt";
+	char fileName[] = "tensor_input.txt";
 	char fileA[] = "A.txt";
 	char fileB[] = "B.txt";
 	char fileC[] = "C.txt";
 
     int *Ti_ind, *Tt_ind, *Tq_ind;
     float* Ti_data, *Tt_data, *Tq_data;
-    int i, t, q, n;
-    parseTensorFile(fileName,&Ti_ind,&Ti_data,&Tt_ind,&Tt_data,&Tq_ind,&Tq_data,&i,&t,&q,&n);
-    /*
+    //int i, t, q, n;
+    //parseTensorFile(fileName,&Ti_ind,&Ti_data,&Tt_ind,&Tt_data,&Tq_ind,&Tq_data,&i,&t,&q,&n);
+    int i = 3, t = 3, q = 3, n = 27;
+	genTensor(&Ti_ind,&Ti_data,&Tt_ind,&Tt_data,&Tq_ind,&Tq_data,i,t,q,n);
+	
+	/*
 	for(int ind=0;ind<i;ind++){
         printf("%d ", Ti_ind[ind]);
     }
@@ -283,9 +373,9 @@ int main ( int argc, char *  argv [] )
 	float* B = new float[k*t];
 	float* C = new float[k*q];
 
-	for(int ind=0;ind<(k*i);ind++) A[ind] = 1.0f;//(float)rand();
-	for(int ind=0;ind<(k*t);ind++) B[ind] = 1.0f;//(float)rand();
-	for(int ind=0;ind<(k*q);ind++) C[ind] = 1.0f;//(float)rand();
+	for(int ind=0;ind<(k*i);ind++) A[ind] = (float)rand();
+	for(int ind=0;ind<(k*t);ind++) B[ind] = (float)rand();
+	for(int ind=0;ind<(k*q);ind++) C[ind] = (float)rand();
 
     float *Ti_data_cuda = NULL, *Tt_data_cuda = NULL, *Tq_data_cuda = NULL;
 	int *Ti_ind_cuda = NULL, *Tt_ind_cuda = NULL, *Tq_ind_cuda = NULL;
@@ -331,7 +421,7 @@ int main ( int argc, char *  argv [] )
 	
 	bool flag = true;
 
-	for(int ind=0;ind<1000;ind++){
+	for(int ind=0;ind<100;ind++){
 		if(flag){	
 			cudaDeviceSynchronize();
 			factorAKernel<<<blocks, dim3(k,i)>>>(Ti_ind_cuda, Ti_data_cuda, A_cuda, B_cuda, C_cuda, A_next_cuda,i,t,q,3*n,k,beta);
@@ -362,6 +452,7 @@ int main ( int argc, char *  argv [] )
 		cudaMemcpy      ( A, A_next_cuda, numBytesA, cudaMemcpyDeviceToHost );
 		cudaMemcpy      ( B, B_next_cuda, numBytesB, cudaMemcpyDeviceToHost );
 		cudaMemcpy      ( C, C_next_cuda, numBytesC, cudaMemcpyDeviceToHost );
+		
 	}
 	else{
 		cudaMemcpy      ( A, A_cuda, numBytesA, cudaMemcpyDeviceToHost );
@@ -377,6 +468,10 @@ int main ( int argc, char *  argv [] )
     printf("\ntime spent executing by the GPU: %.2f millseconds\n", gpuTime );
     
 	printToFile(fileA,fileB,fileC,k,A,i,B,t,C,q);
+
+	tensor_elem* Q = buildErrorTensor(A,B,C,k,i,t,q);
+	printTensorToFile("error_tensor.txt",Q,i,t,q,i*t*q);
+	free(Q);
 
     cudaEventDestroy ( start );
     cudaEventDestroy ( stop  );
